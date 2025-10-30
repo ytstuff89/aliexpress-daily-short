@@ -1,4 +1,11 @@
-# main.py — full auto, no external API
+# main.py — full auto, no external API (poprawiona wersja)
+# - Szuka REALNEGO produktu na AliExpress (HTML, bez API)
+# - Pobiera 3–4 zdjęcia produktu (alicdn/aliexpress), full-res
+# - Tworzy naturalną narrację
+# - Napisy rozłożone na CAŁY film
+# - Format 1080x1920, 45 s min
+# - TTS: espeak-ng (męski, płynny), fallback gTTS
+
 import os, re, io, random, subprocess, textwrap, time
 from datetime import datetime
 
@@ -17,7 +24,7 @@ MIN_IMGS, MAX_IMGS = 3, 4
 
 # ---------- HELPERS ----------
 def http_get(url, retry=3, sleep=2):
-    for i in range(retry):
+    for _ in range(retry):
         r = requests.get(url, headers=HEAD, timeout=25)
         if r.status_code == 200 and r.text:
             return r.text
@@ -30,18 +37,14 @@ def pick_from(seq):
 # ---------- 1) FIND PRODUCT (AliExpress search HTML, no API) ----------
 KEYWORDS = [
     "gadget", "kitchen gadget", "car accessory", "phone accessory",
-    "tool", "mini fan", "usb gadget", "desk gadget"
+    "tool", "usb gadget", "desk gadget", "bike accessory"
 ]
 
 def search_aliexpress_links(q):
-    # public search HTML (server-side rendered enough to parse links)
     url = f"https://www.aliexpress.com/wholesale?SearchText={requests.utils.quote(q)}"
     html = http_get(url)
-    # parse item links like /item/100500...html
     links = re.findall(r'//www\.aliexpress\.com/item/\d+\.html', html)
-    # normalize to https
     links = [("https:" + L) if L.startswith("//") else L for L in links]
-    # filter duplicates
     out, seen = [], set()
     for u in links:
         if u not in seen:
@@ -52,11 +55,9 @@ def pick_product_url():
     random.shuffle(KEYWORDS)
     for kw in KEYWORDS:
         links = search_aliexpress_links(kw)
-        # prefer english-language listings
         links = [u for u in links if "/item/" in u]
         if links:
             return pick_from(links[:20])
-    # ultimate fallback
     return "https://www.aliexpress.com/item/1005005145894174.html"
 
 # ---------- 2) SCRAPE PRODUCT PAGE ----------
@@ -89,7 +90,7 @@ def scrape_product(url):
     if not price:
         price = "budget price"
 
-    # Images: take from page <img> + scripts pointing to alicdn
+    # Images
     imgs = []
     for img in soup.find_all("img"):
         src = img.get("src") or img.get("data-src") or ""
@@ -102,18 +103,13 @@ def scrape_product(url):
         for u in IMG_CDN_PAT.findall(s.get_text(" ", strip=False)):
             imgs.append(u)
 
-    # clean & keep only full-size (try to upgrade size)
-    clean = []
-    seen = set()
+    clean, seen = [], set()
     for u in imgs:
-        # upgrade small -> large if pattern present
         u = re.sub(r'_(?:\d+x\d+|Q\d+|jpg_)?\.(jpg|jpeg|png)$', r'.\1', u)
         if u not in seen:
             seen.add(u); clean.append(u)
 
-    # keep 3-4
     photos = clean[:MAX_IMGS] if len(clean) >= MIN_IMGS else clean
-
     return {"title": title, "price": price, "url": url, "images": photos}
 
 # ---------- 3) IMAGE PREP ----------
@@ -135,11 +131,14 @@ def gather_frames(urls):
         if im is None: continue
         frames.append(fit_9x16(im))
         if len(frames) >= MAX_IMGS: break
-    # hard fallback
+    # fallback: duplikuj, aby mieć MIN_IMGS
+    if 0 < len(frames) < MIN_IMGS:
+        while len(frames) < MIN_IMGS:
+            frames.append(frames[-1])
     if not frames:
         r = requests.get("https://picsum.photos/1080/1920", timeout=20)
-        frames = [Image.open(io.BytesIO(r.content)).convert("RGB")]
-    return frames
+        frames = [Image.open(io.BytesIO(r.content)).convert("RGB")] * MIN_IMGS
+    return frames[:MAX_IMGS]
 
 # ---------- 4) CAPTIONS & OVERLAYS ----------
 def wrap(draw, text, max_w, font):
@@ -166,13 +165,11 @@ def overlay(img, title, price, caption):
     except:
         f_big = ImageFont.load_default(); f_mid = ImageFont.load_default()
 
-    # top
     y=34
     for ln in wrap(d, title[:100], W-120, f_big)[:2]:
         d.text((60,y), ln, fill=(255,255,255,255), font=f_big); y+=64
     d.text((60,y+6), f"Price: {price}", fill=(255,255,255,255), font=f_mid)
 
-    # bottom
     lines = wrap(d, caption, W-120, f_mid)[:4]
     yb = H-190-(len(lines)*48)
     for ln in lines:
@@ -181,7 +178,7 @@ def overlay(img, title, price, caption):
     out = img.convert("RGBA")
     return Image.alpha_composite(out, o).convert("RGB")
 
-# ---------- 5) SCRIPT (naturalny, bez „Reason 1…”) ----------
+# ---------- 5) SCRIPT ----------
 def build_script(title, price):
     return (
         f"{title}. "
@@ -202,38 +199,33 @@ def split_for_scenes(text, n):
         parts.append(" ".join(words[i:i+chunk]))
         if len(parts)==n: break
     while len(parts)<n: parts.append("")
-    return parts
+    return parts[:n]
 
-# ---------- 6) TTS (espeak-ng tuned; fallback gTTS) ----------
+# ---------- 6) TTS ----------
 def tts_to_mp3(text, out="voice.mp3"):
     try:
         subprocess.run(["espeak-ng","--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         wav = "voice.wav"
-        # en-us+m7 — męski; s=165 tempo; p=52 pitch (bardziej ludzki)
         subprocess.run(["espeak-ng","-v","en-us+m7","-s","165","-p","52","-w",wav,text], check=True)
-        subprocess.run(["ffmpeg","-y","-i",wav,"-ar","44100","-ac","2",out],
+        subprocess.run(["ffmpeg","-y","-i",wav","-ar","44100","-ac","2",out],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try: os.remove(wav)
         except: pass
     except Exception:
         from gtts import gTTS
         gTTS(text=text, lang="en").save(out)
-    # duration
     aud = AudioFileClip(out); dur=float(aud.duration); aud.close()
     return out, dur
 
-# ---------- 7) BUILD VIDEO ----------
+# ---------- 7) BUILD VIDEO (FIX: parts == frames) ----------
 def build_video(frames, title, price, script_text, voice_mp3, out="short.mp4"):
     audio = AudioFileClip(voice_mp3)
-    
-    # ile mamy zdjęć i scen
-    n = len(frames)
-    if n == 0: raise RuntimeError("No frames found")
-    n = max(MIN_IMGS, min(MAX_IMGS, n))
+
+    # liczba scen ograniczona do posiadanych kadrów
+    n = max(MIN_IMGS, min(MAX_IMGS, len(frames)))
     frames = frames[:n]
 
-    parts = split_for_scenes(script_text, n)
-    parts = parts[:n]  # dopasowanie długości
+    parts = split_for_scenes(script_text, n)  # dokładnie n części
 
     target = max(TARGET_SECONDS, audio.duration)
     per = max(4.5, target / n)
