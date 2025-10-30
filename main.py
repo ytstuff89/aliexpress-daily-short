@@ -13,23 +13,15 @@ from moviepy.video.fx.all import resize
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
 
 def ddg_search_aliexpress():
-    q_pool = [
-        "site:aliexpress.com cheap gadget",
-        "site:aliexpress.com useful household gadget",
-        "site:aliexpress.com kitchen gadget cheap",
-        "site:aliexpress.com car gadget cheap",
-        "site:aliexpress.com tool gadget cheap",
-        "site:aliexpress.com electronics gadget cheap",
+    # prosta lista linków losowych żeby uniknąć limitów DDG
+    sample = [
+        "https://www.aliexpress.com/item/1005005136453309.html",
+        "https://www.aliexpress.com/item/1005006227833009.html",
+        "https://www.aliexpress.com/item/1005005902550895.html",
+        "https://www.aliexpress.com/item/1005006069462704.html",
+        "https://www.aliexpress.com/item/1005006434825098.html",
     ]
-    q = random.choice(q_pool)
-    with DDGS() as ddgs:
-        for r in ddgs.text(q, max_results=20, region="wt-wt", safesearch="off"):
-            url = r.get("href") or r.get("url")
-            if not url:
-                continue
-            if "aliexpress.com" in url and "item" in url:
-                return url
-    return None
+    return random.choice(sample)
 
 def fetch(url):
     r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
