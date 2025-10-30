@@ -1,16 +1,18 @@
-import os, re, io, random, time, smtplib, textwrap
+import os, re, io, random, smtplib, textwrap
 from email.message import EmailMessage
 from datetime import datetime
-from duckduckgo_search import DDGS
+
 import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
-from PIL import Image, ImageOps
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip, TextClip
+from PIL import Image, ImageOps, ImageDraw, ImageFont
+from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
 
+# ------------------------- PRODUCT PICK -------------------------
 def ddg_search_aliexpress():
+    # Unikamy limitów wyszukiwarek – losujemy z listy sprawdzonych linków
     sample = [
         "https://www.aliexpress.com/item/1005005136453309.html",
         "https://www.aliexpress.com/item/1005006227833009.html",
@@ -21,13 +23,14 @@ def ddg_search_aliexpress():
     return random.choice(sample)
 
 def fetch(url):
-    r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
+    r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=25)
     r.raise_for_status()
     return r.text
 
 def parse_product(html, url):
     soup = BeautifulSoup(html, "lxml")
 
+    # title
     title = None
     ogt = soup.find("meta", property="og:title")
     if ogt and ogt.get("content"): title = ogt["content"].strip()
@@ -35,27 +38,27 @@ def parse_product(html, url):
         t = soup.find("title")
         if t: title = t.get_text().strip()
 
+    # images
     images = []
     for m in soup.find_all("meta", {"property": "og:image"}):
         c = m.get("content")
         if c and c not in images: images.append(c)
-
     for script in soup.find_all("script"):
         txt = script.get_text(" ", strip=False)
         if "image" in txt and (".jpg" in txt or ".png" in txt):
             for u in re.findall(r'https?://[^"\']+\.(?:jpg|jpeg|png)', txt, flags=re.I):
-                if "ae03" in u or "ae01" in u or "alicdn" in u or "aliexpress" in u:
+                if any(k in u for k in ("ae03","ae01","alicdn","aliexpress")):
                     if u not in images: images.append(u)
 
+    # price (best-effort)
     price = None
     ogd = soup.find("meta", property="og:description")
     if ogd and ogd.get("content"):
-        m = re.search(r'(\$\s?\d+[\.\,]?\d*|\d+[\.\,]?\d*\s*(USD|PLN|€|EUR|zł))', ogd["content"])
+        m = re.search(r'(\$\s?\d+[\.,]?\d*|\d+[\.,]?\d*\s*(USD|PLN|€|EUR|zł))', ogd["content"])
         if m: price = m.group(0)
-
     if not price:
         txt = soup.get_text(" ", strip=True)
-        m = re.search(r'(\$\s?\d+[\.\,]?\d*|\d+[\.\,]?\d*\s*(USD|PLN|€|EUR|zł))', txt)
+        m = re.search(r'(\$\s?\d+[\.,]?\d*|\d+[\.,]?\d*\s*(USD|PLN|€|EUR|zł))', txt)
         if m: price = m.group(0)
 
     return {
@@ -65,9 +68,10 @@ def parse_product(html, url):
         "url": url
     }
 
+# ------------------------- MEDIA -------------------------
 def safe_get_image(url):
     try:
-        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=25)
         r.raise_for_status()
         return Image.open(io.BytesIO(r.content)).convert("RGB")
     except:
@@ -81,78 +85,99 @@ def prepare_images(urls, target=(1080,1920)):
         seen.add(u)
         img = safe_get_image(u)
         if img is None: continue
-        bg = ImageOps.fit(img, target, method=Image.LANCZOS, bleed=0.0, centering=(0.5,0.5))
-        imgs.append(bg)
+        fitted = ImageOps.fit(img, target, method=Image.LANCZOS, centering=(0.5,0.5))
+        imgs.append(fitted)
         if len(imgs) >= 6:
             break
     return imgs
 
 def write_script(title, price, url):
     base = f"""Quick look at a cheap gadget from AliExpress!
-Product: {title}.
-Price: {price}.
+Product: {title}. Price: {price}.
 Useful, affordable and fun to try.
-Check reviews before buying.
-Link in bio!
-"""
-    lines = [l.strip() for l in base.splitlines() if l.strip()]
-    return " ".join(lines)
+Pros: low price, easy to use. Cons: not premium build.
+Check buyer reviews & photos. Link below!"""
+    return " ".join([l.strip() for l in base.splitlines() if l.strip()])
 
 def tts_gtts(text, out_path="voice.mp3"):
     tts = gTTS(text=text, lang="en")
     tts.save(out_path)
     return out_path
 
+def _wrap(draw, text, max_width, font):
+    lines, line = [], ""
+    for word in text.split():
+        test = (line + " " + word).strip()
+        w, _ = draw.textsize(test, font=font)
+        if w <= max_width:
+            line = test
+        else:
+            if line: lines.append(line)
+            line = word
+    if line: lines.append(line)
+    return lines
+
+def _overlay_text(img, title, price, cta):
+    W, H = img.size
+    # półprzezroczysty overlay
+    overlay = Image.new("RGBA", (W,H), (0,0,0,0))
+    odraw = ImageDraw.Draw(overlay)
+    # pasek u góry
+    odraw.rectangle([0,0,W,190], fill=(0,0,0,120))
+    # pasek na dole
+    odraw.rectangle([0,H-140,W,H], fill=(0,0,0,120))
+    # teksty
+    try:
+        font_big = ImageFont.truetype("DejaVuSans-Bold.ttf", 48)
+        font_mid = ImageFont.truetype("DejaVuSans.ttf", 42)
+    except:
+        font_big = ImageFont.load_default()
+        font_mid = ImageFont.load_default()
+
+    draw = ImageDraw.Draw(overlay)
+    # Title
+    lines = _wrap(draw, title[:100], W-120, font_big)
+    y = 28
+    for ln in lines[:2]:
+        draw.text((60,y), ln, font=font_big, fill=(255,255,255,255))
+        y += 54
+    # Price
+    draw.text((60, y+10), f"Price: {price}", font=font_mid, fill=(255,255,255,255))
+    # CTA bottom
+    cta_lines = _wrap(draw, cta, W-120, font_mid)
+    yb = H-120
+    for ln in cta_lines[:2]:
+        draw.text((60,yb), ln, font=font_mid, fill=(255,255,255,255))
+        yb += 46
+
+    out = img.convert("RGBA")
+    out = Image.alpha_composite(out, overlay).convert("RGB")
+    return out
+
 def build_video(images, voice_path, out_path="short.mp4", title="", price=""):
     W, H = 1080, 1920
     duration_total = 45
-    per = max(5, duration_total // max(1, len(images)))
+    per = max(5, duration_total // max(1, len(images)))  # sekundy na klatkę
+    processed = []
+    for im in images or [Image.new("RGB",(W,H),(0,0,0))]:
+        with_text = _overlay_text(im, title, price, "Follow for more cheap finds!")
+        processed.append(with_text)
+
     clips = []
-    for im in images:
+    for im in processed:
         buf = io.BytesIO()
         im.save(buf, format="JPEG", quality=92)
         buf.seek(0)
-        c = ImageClip(buf).set_duration(per)
-        zx = 1.06
-        c1 = c.resize(lambda t: 1 + (zx-1)*(t/per)).set_position("center")
-        clips.append(c1)
+        c = ImageClip(buf).set_duration(per).set_position("center")
+        clips.append(c)
 
-    if not clips:
-        txt = TextClip("AliExpress Gadget", fontsize=72, color="white").set_duration(duration_total)
-        bg = TextClip("", size=(W,H), color=(0,0,0)).set_duration(duration_total)
-        clips = [CompositeVideoClip([bg, txt.set_position("center")], size=(W,H))]
-
-    seq = concatenate_videoclips(clips, method="compose")
-    seq = seq.set_fps(30).resize((W,H))
-
-    try:
-        title_txt = TextClip(title[:60], fontsize=52, font="Arial-Bold", method="caption", size=(W-120,None), color="white").set_duration(seq.duration)
-    except:
-        title_txt = TextClip(title[:60], fontsize=52, color="white").set_duration(seq.duration)
-
-    try:
-        price_txt = TextClip(f"Price: {price}", fontsize=48, font="Arial", method="caption", size=(W-120,None), color="white").set_duration(min(8, seq.duration))
-    except:
-        price_txt = TextClip(f"Price: {price}", fontsize=48, color="white").set_duration(min(8, seq.duration))
-
-    try:
-        cta = TextClip("Follow for more cheap finds!", fontsize=46, font="Arial", method="caption", size=(W-120,None), color="white").set_duration(min(7, seq.duration))
-    except:
-        cta = TextClip("Follow for more cheap finds!", fontsize=46, color="white").set_duration(min(7, seq.duration))
-
-    bar = TextClip("", size=(W,180), color=(0,0,0)).set_opacity(0.45).set_duration(seq.duration)
-
-    comp = CompositeVideoClip(
-        [seq, bar.set_position(("center","top")), title_txt.set_position(("center", 40)),
-         price_txt.set_position(("center", 140)), cta.set_position(("center", H-160))],
-        size=(W,H)
-    )
-
+    seq = concatenate_videoclips(clips, method="compose").set_fps(30).resize((W,H))
     audio = AudioFileClip(voice_path)
-    comp = comp.set_audio(audio)
-    comp.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=30)
+    seq = seq.set_audio(audio)
+    seq.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=30)
     return out_path
 
+# ------------------------- EMAIL -------------------------
 def send_email(subject, body, attachment_path):
     user = os.environ["GMAIL_USER"]
     app_pw = os.environ["GMAIL_APP_PASSWORD"]
@@ -167,10 +192,12 @@ def send_email(subject, body, attachment_path):
     with open(attachment_path, "rb") as f:
         msg.add_attachment(f.read(), maintype="video", subtype="mp4", filename="short.mp4")
 
+    import smtplib
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
         s.login(user, app_pw)
         s.send_message(msg)
 
+# ------------------------- MAIN -------------------------
 def main():
     url = ddg_search_aliexpress()
     html = fetch(url)
