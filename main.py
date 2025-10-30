@@ -10,9 +10,9 @@ USER_AGENT = "Mozilla/5.0"
 
 def find_product():
     search_terms = [
-        "aliexpress trending gadget 2025",
-        "cheap useful gadget aliexpress",
-        "viral gadget aliexpress"
+        "trending gadget aliexpress 2025",
+        "viral aliexpress gadget",
+        "useful cheap gadget aliexpress"
     ]
 
     for q in search_terms:
@@ -25,29 +25,31 @@ def find_product():
             if link and "aliexpress.com/item" in link:
                 return link
 
-    return "https://www.aliexpress.com/item/1005005145894174.html"  # fallback
+    return "https://www.aliexpress.com/item/1005005145894174.html"
 
 def scrape(url):
     r = requests.get(url, headers={"User-Agent": USER_AGENT})
     soup = BeautifulSoup(r.text, "lxml")
 
-    title = soup.find("title").get_text().strip()[:60]
+    title_tag = soup.find("title")
+    if title_tag:
+        title = title_tag.get_text().strip()[:60]
+    else:
+        title = "AliExpress Gadget"
 
     imgs = []
     for img in soup.find_all("img"):
         src = img.get("src", "")
-        if src and ("jpg" in src or "png" in src) and src.startswith("http"):
+        if src and src.startswith("http") and ("jpg" in src or "png" in src):
             imgs.append(src)
             if len(imgs) >= 3:
                 break
 
-    if len(imgs) == 0:
-        imgs = ["https://i.imgur.com/ZK8Qp5O.jpeg"]  # fallback image
+    if not imgs:
+        imgs = ["https://i.imgur.com/ZK8Qp5O.jpeg"]
 
-    price = "Unknown"
-    match = re.search(r"\d+\.\d+|\d+", soup.text)
-    if match:
-        price = match.group(0)
+    price_match = re.search(r"\d+\.\d+|\d+", soup.text)
+    price = price_match.group(0) if price_match else "Unknown"
 
     return title, price, imgs
 
@@ -59,10 +61,13 @@ def make_video(title, price, imgs):
     clips = []
     for img in imgs:
         data = requests.get(img, headers={"User-Agent": USER_AGENT}).content
-        with open("img.jpg", "wb") as f: f.write(data)
+        with open("img.jpg", "wb") as f:
+            f.write(data)
 
         pic = ImageClip("img.jpg").set_duration(2).fx(resize, height=1920).on_color(size=(1080,1920))
-        txt = TextClip(title, fontsize=60, font="Arial-Bold", color="white").set_position(("center","bottom")).set_duration(2)
+        txt = TextClip(title, fontsize=60, font="Arial-Bold", color="white") \
+                .set_position(("center","bottom")).set_duration(2)
+
         clips.append(CompositeVideoClip([pic, txt]))
 
     final = concatenate_videoclips(clips).set_audio(audio)
