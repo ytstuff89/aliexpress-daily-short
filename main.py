@@ -108,13 +108,16 @@ def _wrap(draw, text, max_width, font):
     lines, line = [], ""
     for word in text.split():
         test = (line + " " + word).strip()
-        w, _ = draw.textsize(test, font=font)
+        bbox = draw.textbbox((0, 0), test, font=font)
+        w = bbox[2] - bbox[0]
         if w <= max_width:
             line = test
         else:
-            if line: lines.append(line)
+            if line:
+                lines.append(line)
             line = word
-    if line: lines.append(line)
+    if line:
+        lines.append(line)
     return lines
 
 def _overlay_text(img, title, price, cta):
