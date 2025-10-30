@@ -123,13 +123,19 @@ def build_video(images, voice_path, out_path="short.mp4", title="", price=""):
     seq = concatenate_videoclips(clips, method="compose")
     seq = seq.set_fps(30).resize((W,H))
 
+    try:
     title_txt = TextClip(title[:60], fontsize=52, font="Arial-Bold",
                          method="caption", size=(W-120,None), color="white").set_duration(seq.duration)
+except:
+    title_txt = TextClip(title[:60], fontsize=52, color="white").set_duration(seq.duration)
     price_txt = TextClip(f"Price: {price}", fontsize=48, font="Arial",
                          method="caption", size=(W-120,None), color="white").set_duration(min(8, seq.duration))
     bar = TextClip("", size=(W,180), color=(0,0,0)).set_opacity(0.45).set_duration(seq.duration)
+    try:
     cta = TextClip("Subscribe for more cheap finds!", fontsize=46, font="Arial",
                    method="caption", size=(W-120,None), color="white").set_duration(min(7, seq.duration))
+except:
+    cta = TextClip("Subscribe for more cheap finds!", fontsize=46, color="white").set_duration(min(7, seq.duration))
 
     comp = CompositeVideoClip(
         [
