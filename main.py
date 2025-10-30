@@ -225,19 +225,27 @@ def tts_to_mp3(text, out="voice.mp3"):
 # ---------- 7) BUILD VIDEO ----------
 def build_video(frames, title, price, script_text, voice_mp3, out="short.mp4"):
     audio = AudioFileClip(voice_mp3)
-    n = max(MIN_IMGS, min(MAX_IMGS, len(frames))) or MIN_IMGS
+    
+    # ile mamy zdjęć i scen
+    n = len(frames)
+    if n == 0: raise RuntimeError("No frames found")
+    n = max(MIN_IMGS, min(MAX_IMGS, n))
     frames = frames[:n]
-    parts = split_for_scenes(script_text, n)
-    target = max(TARGET_SECONDS, audio.duration)
-    per = max(4.5, target/n)
 
-    clips=[]
+    parts = split_for_scenes(script_text, n)
+    parts = parts[:n]  # dopasowanie długości
+
+    target = max(TARGET_SECONDS, audio.duration)
+    per = max(4.5, target / n)
+
+    clips = []
     for i in range(n):
         fr = overlay(frames[i], title, price, parts[i])
         clip = ImageClip(np.array(fr)).set_duration(per).set_position("center")
         clips.append(clip)
 
     seq = concatenate_videoclips(clips, method="compose").set_fps(30)
+
     if seq.duration < audio.duration:
         delta = audio.duration - seq.duration
         clips[-1] = clips[-1].set_duration(clips[-1].duration + delta)
