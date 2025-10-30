@@ -10,27 +10,25 @@ USER_AGENT = "Mozilla/5.0"
 
 def find_product():
     search_terms = [
-        "cool gadget from aliexpress",
-        "trending gadget 2025 aliexpress",
-        "new tech gadget cheap"
+        "aliexpress trending gadget 2025",
+        "cheap useful gadget aliexpress",
+        "viral gadget aliexpress"
     ]
 
-    q = random.choice(search_terms)
-    url = f"https://duckduckgo.com/html/?q={q}+site:aliexpress.com+item"
+    for q in search_terms:
+        url = f"https://duckduckgo.com/html/?q={q}+site:aliexpress.com+item"
+        r = requests.get(url, headers={"User-Agent": USER_AGENT})
+        soup = BeautifulSoup(r.text, "lxml")
 
-    r = requests.get(url, headers={"User-Agent": USER_AGENT})
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "lxml")
+        for a in soup.select("a.result__a"):
+            link = a.get("href")
+            if link and "aliexpress.com/item" in link:
+                return link
 
-    for a in soup.select("a.result__a"):
-        link = a.get("href")
-        if "aliexpress.com/item" in link:
-            return link
-    return None
+    return "https://www.aliexpress.com/item/1005005145894174.html"  # fallback
 
 def scrape(url):
     r = requests.get(url, headers={"User-Agent": USER_AGENT})
-    r.raise_for_status()
     soup = BeautifulSoup(r.text, "lxml")
 
     title = soup.find("title").get_text().strip()[:60]
@@ -38,12 +36,13 @@ def scrape(url):
     imgs = []
     for img in soup.find_all("img"):
         src = img.get("src", "")
-        if "jpg" in src or "png" in src:
-            if "http" not in src:
-                continue
+        if src and ("jpg" in src or "png" in src) and src.startswith("http"):
             imgs.append(src)
             if len(imgs) >= 3:
                 break
+
+    if len(imgs) == 0:
+        imgs = ["https://i.imgur.com/ZK8Qp5O.jpeg"]  # fallback image
 
     price = "Unknown"
     match = re.search(r"\d+\.\d+|\d+", soup.text)
@@ -53,34 +52,23 @@ def scrape(url):
     return title, price, imgs
 
 def make_video(title, price, imgs):
-    clips = []
-
-    voice = gTTS(
-        text=f"{title}. Price {price} dollars. Check the link in description.",
-        lang="en",
-        tld="com"
-    )
+    voice = gTTS(text=f"{title}. Price {price} dollars.", lang="en", tld="com")
     voice.save("voice.mp3")
     audio = AudioFileClip("voice.mp3")
 
+    clips = []
     for img in imgs:
         data = requests.get(img, headers={"User-Agent": USER_AGENT}).content
-        fn = "img.jpg"
-        with open(fn, "wb") as f:
-            f.write(data)
+        with open("img.jpg", "wb") as f: f.write(data)
 
-        pic = ImageClip(fn).set_duration(2).fx(resize, height=1920).on_color(size=(1080,1920))
-        txt = TextClip(
-            title, fontsize=60, font="Arial-Bold", color="white"
-        ).set_position(("center","bottom")).set_duration(2)
-
+        pic = ImageClip("img.jpg").set_duration(2).fx(resize, height=1920).on_color(size=(1080,1920))
+        txt = TextClip(title, fontsize=60, font="Arial-Bold", color="white").set_position(("center","bottom")).set_duration(2)
         clips.append(CompositeVideoClip([pic, txt]))
 
     final = concatenate_videoclips(clips).set_audio(audio)
     final.write_videofile("short.mp4", fps=30)
 
-prod = find_product()
-title, price, imgs = scrape(prod)
+url = find_product()
+title, price, imgs = scrape(url)
 make_video(title, price, imgs)
-
 print("DONE")
