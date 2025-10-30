@@ -11,9 +11,7 @@ from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
 
-# ------------------------- PRODUCT PICK -------------------------
 def ddg_search_aliexpress():
-    # Unikamy limitów – losujemy z listy sprawdzonych linków
     sample = [
         "https://www.aliexpress.com/item/1005005136453309.html",
         "https://www.aliexpress.com/item/1005006227833009.html",
@@ -30,8 +28,6 @@ def fetch(url):
 
 def parse_product(html, url):
     soup = BeautifulSoup(html, "lxml")
-
-    # title
     title = None
     ogt = soup.find("meta", property="og:title")
     if ogt and ogt.get("content"): title = ogt["content"].strip()
@@ -39,7 +35,6 @@ def parse_product(html, url):
         t = soup.find("title")
         if t: title = t.get_text().strip()
 
-    # images
     images = []
     for m in soup.find_all("meta", {"property": "og:image"}):
         c = m.get("content")
@@ -51,7 +46,6 @@ def parse_product(html, url):
                 if any(k in u for k in ("ae03","ae01","alicdn","aliexpress")):
                     if u not in images: images.append(u)
 
-    # price (best-effort)
     price = None
     ogd = soup.find("meta", property="og:description")
     if ogd and ogd.get("content"):
@@ -69,7 +63,6 @@ def parse_product(html, url):
         "url": url
     }
 
-# ------------------------- MEDIA -------------------------
 def safe_get_image(url):
     try:
         r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=25)
@@ -112,10 +105,8 @@ def _overlay_text(img, title, price, cta):
     W, H = img.size
     overlay = Image.new("RGBA", (W,H), (0,0,0,0))
     odraw = ImageDraw.Draw(overlay)
-    # paski
     odraw.rectangle([0,0,W,190], fill=(0,0,0,120))
     odraw.rectangle([0,H-140,W,H], fill=(0,0,0,120))
-    # fonty
     try:
         font_big = ImageFont.truetype("DejaVuSans-Bold.ttf", 48)
         font_mid = ImageFont.truetype("DejaVuSans.ttf", 42)
@@ -123,15 +114,12 @@ def _overlay_text(img, title, price, cta):
         font_big = ImageFont.load_default()
         font_mid = ImageFont.load_default()
     draw = ImageDraw.Draw(overlay)
-    # tytuł
     lines = _wrap(draw, title[:100], W-120, font_big)
     y = 28
     for ln in lines[:2]:
         draw.text((60,y), ln, font=font_big, fill=(255,255,255,255))
         y += 54
-    # cena
     draw.text((60, y+10), f"Price: {price}", font=font_mid, fill=(255,255,255,255))
-    # CTA
     cta_lines = _wrap(draw, cta, W-120, font_mid)
     yb = H-120
     for ln in cta_lines[:2]:
@@ -162,39 +150,31 @@ def build_video(images, voice_path, out_path="short.mp4", title="", price=""):
     for im in images or [Image.new("RGB",(W,H),(0,0,0))]:
         with_text = _overlay_text(im, title, price, "Follow for more cheap finds!")
         processed.append(with_text)
-
     clips = []
     for im in processed:
-        arr = np.array(im)  # PIL -> numpy
-        c = ImageClip(arr).set_duration(per).set_position("center")
-        clips.append(c)
-
-    seq = concatenate_videoclips(clips, method="compose").set_fps(30).resize((W,H))
+        arr = np.array(im)
+        clips.append(ImageClip(arr).set_duration(per).set_position("center"))
+    seq = concatenate_videoclips(clips, method="compose").set_fps(30)
     audio = AudioFileClip(voice_path)
     seq = seq.set_audio(audio)
     seq.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=30)
     return out_path
 
-# ------------------------- EMAIL -------------------------
 def send_email(subject, body, attachment_path):
     user = os.environ["GMAIL_USER"]
     app_pw = os.environ["GMAIL_APP_PASSWORD"]
     to_addr = os.environ.get("RECIPIENT_EMAIL", user)
-
     msg = EmailMessage()
     msg["From"] = user
     msg["To"] = to_addr
     msg["Subject"] = subject
     msg.set_content(body)
-
     with open(attachment_path, "rb") as f:
         msg.add_attachment(f.read(), maintype="video", subtype="mp4", filename="short.mp4")
-
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
         s.login(user, app_pw)
         s.send_message(msg)
 
-# ------------------------- MAIN -------------------------
 def main():
     url = ddg_search_aliexpress()
     html = fetch(url)
@@ -203,7 +183,6 @@ def main():
     script = write_script(meta["title"], meta["price"], meta["url"])
     voice = tts_gtts(script)
     video = build_video(imgs, voice, "short.mp4", title=meta["title"], price=meta["price"])
-
     subject = f"Daily AliExpress Short - {datetime.utcnow().strftime('%Y-%m-%d')}"
     body = f"{meta['title']}\n{meta['price']}\n{meta['url']}"
     send_email(subject, body, video)
